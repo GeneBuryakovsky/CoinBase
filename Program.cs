@@ -18,6 +18,8 @@ namespace ConsoleApp2
         public static string _coinBaseApiSecret = string.Empty;
         public static string _coinBaseBuyPrices = string.Empty;
         public static string _coinBaseSellPrices = string.Empty;
+        public static string _buyAmountUSD = string.Empty;
+        public static string _buyAmount = string.Empty;
         public static decimal _floorPrice;
         public static decimal _ceilingPrice;
 
@@ -31,12 +33,15 @@ namespace ConsoleApp2
             _coinBaseApiSecret = appSettings.Get("ApiSecret");
             _floorPrice = Convert.ToDecimal(appSettings.Get("FloorPrice"));
             _ceilingPrice = Convert.ToDecimal (appSettings.Get("CeilingPrice"));
+            _buyAmountUSD = appSettings.Get("BuyAmountUSD");
+            _buyAmount = appSettings.Get("BuyAmount");
 
             string paymentMethods = appSettings.Get("PaymentMethods");
 
-            string paymentMethodId = GetPaymentMethod(paymentMethods);
-           
             decimal floorPrice = _floorPrice;
+
+            string accountId = GetAccountId();
+            string paymentMethodId = GetPaymentMethod(paymentMethods);
 
             while (floorPrice >= _floorPrice)
             {
@@ -59,6 +64,12 @@ namespace ConsoleApp2
                 System.Threading.Thread.Sleep(7000);
             }
 
+            if (floorPrice < _floorPrice)
+            {
+                var buyBitcoin = MakeBuy(paymentMethodId, accountId);
+            }
+
+            Console.Clear();
             Console.WriteLine("Price Floor Reached...");
             Console.ReadLine();
         }  
@@ -86,6 +97,31 @@ namespace ConsoleApp2
             return paymentId;
         }
 
+        public static string GetAccountId()
+        {
+            string accountsEndpoint = "/v2/accounts";
+
+            var timestamp = DateTimeOffset.Now.ToUnixTimeSeconds().ToString();
+            var account = new RestClient(_coinBaseApiUrl);
+            var accountRequest = new RestRequest(accountsEndpoint, Method.GET);
+            account.AddDefaultHeader("CB-ACCESS-KEY", _coinBaseApiKey);
+            account.AddDefaultHeader("CB-ACCESS-SIGN", GetAccessSign(timestamp, "GET", accountsEndpoint, string.Empty, _coinBaseApiSecret));
+            account.AddDefaultHeader("CB-ACCESS-TIMESTAMP", timestamp);
+            var accountResult = account.Execute<string>(accountRequest).Data;
+
+            dynamic accountResults = JsonConvert.DeserializeObject<dynamic>(accountResult);
+            var accountId = string.Empty;
+
+            foreach (dynamic accountSingle in accountResults.data)
+            {
+                accountId = accountSingle.id;
+
+                break;
+            }
+
+            return accountId;
+        }
+
         public static string GetAccessSign(string timestamp, string command, string path, string body, string apiSecret)
         {
             var hmacKey = Encoding.UTF8.GetBytes(apiSecret);
@@ -95,6 +131,28 @@ namespace ConsoleApp2
             {
                 return new HMACSHA256(hmacKey).ComputeHash(signatureStream).Aggregate(new StringBuilder(), (sb, b) => sb.AppendFormat("{0:x2}", b), sb => sb.ToString());
             }
+        }
+
+        public static string MakeBuy(string paymentMethod, string accountId)
+        {
+            string buyEndpoint = $"/v2/accounts/{accountId}/buys";
+            var body = new { currency = "USD", total = _buyAmountUSD, payment_method = paymentMethod };
+            var bodySerialized = JsonConvert.SerializeObject(body);
+            var timestamp = DateTimeOffset.Now.ToUnixTimeSeconds().ToString();
+            var buy = new RestClient(_coinBaseApiUrl);
+            var buyRequest = new RestRequest(buyEndpoint, Method.POST);
+            buyRequest.AddJsonBody(body);
+
+            buy.AddDefaultHeader("CB-ACCESS-KEY", _coinBaseApiKey);
+            buy.AddDefaultHeader("CB-ACCESS-SIGN", GetAccessSign(timestamp, "POST", buyEndpoint, bodySerialized , _coinBaseApiSecret));
+            buy.AddDefaultHeader("CB-ACCESS-TIMESTAMP", timestamp);
+            
+            var buyResult = buy.Execute<string>(buyRequest).Data;
+
+            dynamic buyResults = JsonConvert.DeserializeObject<dynamic>(buyResult);
+
+            return buyResult;
+           
         }
     }
 }
