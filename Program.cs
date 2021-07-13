@@ -22,6 +22,7 @@ namespace ConsoleApp2
         public static string _buyAmount = string.Empty;
         public static decimal _floorPrice;
         public static decimal _ceilingPrice;
+        public static decimal _sellPercentage;
 
         static void Main(string[] args)
         {
@@ -32,13 +33,15 @@ namespace ConsoleApp2
             _coinBaseApiKey = appSettings.Get("ApiKey");
             _coinBaseApiSecret = appSettings.Get("ApiSecret");
             _floorPrice = Convert.ToDecimal(appSettings.Get("FloorPrice"));
-            _ceilingPrice = Convert.ToDecimal (appSettings.Get("CeilingPrice"));
+            _ceilingPrice = Convert.ToDecimal(appSettings.Get("CeilingPrice"));
             _buyAmountUSD = appSettings.Get("BuyAmountUSD");
             _buyAmount = appSettings.Get("BuyAmount");
+            _sellPercentage = Convert.ToDecimal(appSettings.Get("SellPercentage"));
 
             string paymentMethods = appSettings.Get("PaymentMethods");
 
             decimal floorPrice = _floorPrice;
+            decimal priceBought = decimal.MinValue;
 
             string accountId = GetAccountId();
             string paymentMethodId = GetPaymentMethod(paymentMethods);
@@ -56,9 +59,9 @@ namespace ConsoleApp2
                 dynamic sellResults = JsonConvert.DeserializeObject<dynamic>(queryResult);
 
                 Console.Write("\r{0}", "One BTC Buy Price: $" + String.Format("{0:n}", Convert.ToDecimal(buyResults.data.amount)) + @" ----- One BTC Sell Price: $"
-                + String.Format("{0:n}" , Convert.ToDecimal(sellResults.data.amount)) + @" ----- Buy/Sell Difference: $" + (Convert.ToDecimal(buyResults.data.amount)
+                + String.Format("{0:n}", Convert.ToDecimal(sellResults.data.amount)) + @" ----- Buy/Sell Difference: $" + (Convert.ToDecimal(buyResults.data.amount)
                 - Convert.ToDecimal(sellResults.data.amount)).ToString());
-                
+
                 floorPrice = buyResults.data.amount;
 
                 System.Threading.Thread.Sleep(7000);
@@ -67,12 +70,39 @@ namespace ConsoleApp2
             if (floorPrice < _floorPrice)
             {
                 var buyBitcoin = MakeBuy(paymentMethodId, accountId);
+                priceBought = floorPrice;
+            }
+
+            while (floorPrice < (priceBought * _sellPercentage))
+            {
+                var client = new RestClient(_coinBaseApiUrl);
+                var request = new RestRequest(_coinBaseBuyPrices, Method.GET);
+                var queryResult = client.Execute<string>(request).Data;
+
+                dynamic buyResults = JsonConvert.DeserializeObject<dynamic>(queryResult);
+
+                request = new RestRequest(_coinBaseSellPrices, Method.GET);
+                queryResult = client.Execute<string>(request).Data;
+                dynamic sellResults = JsonConvert.DeserializeObject<dynamic>(queryResult);
+
+                Console.Write("\r{0}", "One BTC Buy Price: $" + String.Format("{0:n}", Convert.ToDecimal(buyResults.data.amount)) + @" ----- One BTC Sell Price: $"
+                + String.Format("{0:n}", Convert.ToDecimal(sellResults.data.amount)) + @" ----- Buy/Sell Difference: $" + (Convert.ToDecimal(buyResults.data.amount)
+                - Convert.ToDecimal(sellResults.data.amount)).ToString());
+
+                floorPrice = buyResults.data.amount;
+
+                System.Threading.Thread.Sleep(7000);
+            }
+
+            if (floorPrice >= (priceBought * _sellPercentage))
+            {
+                var sellBitcoin = MakeSale(paymentMethodId, accountId);
             }
 
             Console.Clear();
             Console.WriteLine("Price Floor Reached...");
             Console.ReadLine();
-        }  
+        }
 
         public static string GetPaymentMethod(string paymentMethods)
         {
@@ -91,7 +121,10 @@ namespace ConsoleApp2
             {
                 paymentId = paymentMeth.id;
 
-                break;
+                if (paymentMeth.primary_buy == true)
+                {
+                    break;
+                }
             }
 
             return paymentId;
@@ -136,7 +169,7 @@ namespace ConsoleApp2
         public static string MakeBuy(string paymentMethod, string accountId)
         {
             string buyEndpoint = $"/v2/accounts/{accountId}/buys";
-            var body = new { currency = "USD", total = _buyAmountUSD, payment_method = paymentMethod };
+            var body = new { currency = "BTC", total = _buyAmountUSD, payment_method = paymentMethod };
             var bodySerialized = JsonConvert.SerializeObject(body);
             var timestamp = DateTimeOffset.Now.ToUnixTimeSeconds().ToString();
             var buy = new RestClient(_coinBaseApiUrl);
@@ -144,15 +177,37 @@ namespace ConsoleApp2
             buyRequest.AddJsonBody(body);
 
             buy.AddDefaultHeader("CB-ACCESS-KEY", _coinBaseApiKey);
-            buy.AddDefaultHeader("CB-ACCESS-SIGN", GetAccessSign(timestamp, "POST", buyEndpoint, bodySerialized , _coinBaseApiSecret));
+            buy.AddDefaultHeader("CB-ACCESS-SIGN", GetAccessSign(timestamp, "POST", buyEndpoint, bodySerialized, _coinBaseApiSecret));
             buy.AddDefaultHeader("CB-ACCESS-TIMESTAMP", timestamp);
-            
+
             var buyResult = buy.Execute<string>(buyRequest).Data;
 
             dynamic buyResults = JsonConvert.DeserializeObject<dynamic>(buyResult);
 
             return buyResult;
-           
+        }
+
+        public static string MakeSale(string paymentMethod, string accountId)
+        {
+            string buyEndpoint = $"/v2/accounts/{accountId}/sells";
+            var body = new { currency = "USD", amount = _buyAmountUSD, payment_method = paymentMethod };
+            var bodySerialized = JsonConvert.SerializeObject(body);
+            var timestamp = DateTimeOffset.Now.ToUnixTimeSeconds().ToString();
+            var buy = new RestClient(_coinBaseApiUrl);
+            var buyRequest = new RestRequest(buyEndpoint, Method.POST);
+            buyRequest.AddJsonBody(body);
+
+            buy.AddDefaultHeader("CB-ACCESS-KEY", _coinBaseApiKey);
+            buy.AddDefaultHeader("CB-ACCESS-SIGN", GetAccessSign(timestamp, "POST", buyEndpoint, bodySerialized, _coinBaseApiSecret));
+            buy.AddDefaultHeader("CB-ACCESS-TIMESTAMP", timestamp);
+
+            var buyResult = buy.Execute<string>(buyRequest).Data;
+
+            dynamic buyResults = JsonConvert.DeserializeObject<dynamic>(buyResult);
+
+            return buyResult;
+
         }
     }
 }
+
